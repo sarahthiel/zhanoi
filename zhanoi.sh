@@ -87,10 +87,10 @@ snapshot_fs(){
 	[[ "$tapes" = "-" ]] || [[ "$sequence" = "-" ]] || [[ "$dateformat" = "-" ]] || [[ "$prefix" = "-" ]] && die "'$fs' is not correctly Initialized"
 
 	local current_set=$(find_tape_by_sequence $sequence)
-	local obsolete="$($ZFS_CMD list -H -o name -t snapshot | grep -e "^$fs\@$SCRIPTNAME-.*-s$current_set$")"
+	local obsolete="$($ZFS_CMD list -H -o name -t snapshot | grep -e "^$fs\@$SCRIPTNAME-.*-t$current_set$")"
 
 	local date=$(date "+$dateformat")
-	local snapname="$prefix-$date-s$current_set"
+	local snapname="$prefix-$date-t$current_set"
 	exec "$ZFS_CMD snapshot $fs@$snapname"
 
 	# if recursive is set, snapshot children
