@@ -208,13 +208,13 @@ get_skip(){
 cmd_help() {
   cat << EOF
 Usage:
-    $SCRIPTNAME init [--tapes,-t NumberOfTapes] [--dateformat,-d DateFormat] [--prefix,-p Prefix] [-n] [--verbose, -v] zpool/filesystem
+    $SCRIPTNAME init [--tapes,-t NumberOfTapes] [--dateformat,-d DateFormat] [-n] [--verbose, -v] prefix zpool/filesystem
         Initialize filesystem
 
-    $SCRIPTNAME set [--tapes,-t NumberOfTapes] [--dateformat,-d DateFormat] [--prefix,-p Prefix] [--skip,-s] [--no-skip,-S] [-n] [--verbose, -v] zpool/filesystem
+    $SCRIPTNAME set [--tapes,-t NumberOfTapes] [--dateformat,-d DateFormat] [--skip,-s] [--no-skip,-S] [-n] [--verbose, -v] prefix zpool/filesystem
         set configuration parameter for filesystem
 
-    $SCRIPTNAME snapshot [--prefix,-p Prefix] [-r] [-n] [--verbose, -v] zpool/filesystem
+    $SCRIPTNAME snapshot [-r] [-n] [--verbose, -v] prefix zpool/filesystem
         create a snapshot
 
 
@@ -227,9 +227,8 @@ EOF
 cmd_init() {
 	local tapes=$DEFAULTTAPES #default number of tapes
 	local dateformat=$DEFAULTDATEFORMAT # default date format
-	local prefix="$DEFAULTPREFIX" #default prefix
 
-	opts="$(getopt -o t:nvd:p: -l tapes:,verbose,dateformat:,prefix: -n "$SCRIPTNAME" -- "$@")"
+	opts="$(getopt -o t:nvd: -l tapes:,verbose,dateformat: -n "$SCRIPTNAME" -- "$@")"
 	local err=$?
 	eval set -- "$opts"
 
@@ -243,7 +242,8 @@ cmd_init() {
             --) shift; break ;;
 	    esac
 	done
-	fs=$1
+	prefix=$1
+	fs=$2
 
 	[[ $err -ne 0 ]] && cmd_help
 	filesystem_exists "$fs" || die "'$fs' does not exist!"
@@ -257,10 +257,9 @@ cmd_init() {
 cmd_set(){
 	local tapes=''      #default number of tapes
 	local dateformat='' # default date format
-	local prefix="$DEFAULTPREFIX"     #default prefix
 	local skip=''       #skip filesystem
 
-	opts="$(getopt -o t:nvd:p:sS -l tapes:,verbose,dateformat:,prefix:,skip,no-skip -n "$SCRIPTNAME" -- "$@")"
+	opts="$(getopt -o t:nvd:sS -l tapes:,verbose,dateformat:,skip,no-skip -n "$SCRIPTNAME" -- "$@")"
 	local err=$?
 	eval set -- "$opts"
 	while true; do
@@ -275,7 +274,8 @@ cmd_set(){
             --) shift; break ;;
         esac
     done
-	fs=$1
+	prefix=$1
+	fs=$2
 	[[ $err -ne 0 ]] && cmd_help
 	filesystem_exists "$fs" || die "'$fs' does not exist!"
 
@@ -294,14 +294,14 @@ cmd_snapshot() {
 	eval set -- "$opts"
 	while true; do
         case $1 in
-            -p|--prefix) prefix="$2"; shift 2 ;;
             -r) recursive=1; shift ;;
             -v|--verbose) VERBOSE=1; shift ;;
             -n) DRY=1; shift ;;
             --) shift; break ;;
         esac
     done
-	fs=$1
+    prefix=$1
+	fs=$2
 
 	[[ $err -ne 0 ]] && cmd_help
 	snapshot_fs $fs $recursive $prefix
