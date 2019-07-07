@@ -10,10 +10,13 @@
 ########################################
 # GLOBALS                              #
 ########################################
-ZFS_CMD='/sbin/zfs'      # path to zfs command
-SCRIPTNAME="${0##*/}"    # name of program
-VERBOSE=0                # enable verbose output
-DRY=0                    # enable dry run
+ZFS_CMD='/sbin/zfs'         # path to zfs command
+SCRIPTNAME="${0##*/}"       # name of program
+VERBOSE=0                   # enable verbose output
+DRY=0                       # enable dry run
+DEFAULTPREFIX="$SCRIPTNAME" #default prefix
+DEFAULTDATEFORMAT="%y%m%d.%H%M" #default dateformat
+DEFAULTTAPES="2" #default tapes
 
 ########################################
 # HELPER FUNCTIONS                     #
@@ -75,22 +78,23 @@ filesystem_exists() {
 snapshot_fs(){
 	local fs=$1
 	local recursive=$2
+	local prefix=$3
+
 	filesystem_exists "$fs" || die "'$fs' does not exist!"
-	get_skip $fs || return 0
+	get_skip $fs $prefix || return 0
 
 	# read config from fs metadata
-	local tapes=$(get_tape_count $fs)
-	local sequence=$(get_sequence $fs)
-	local dateformat=$(get_dateformat $fs)
-	local prefix=$(get_prefix $fs)
+	local tapes=$(get_tape_count $fs $prefix)
+	local sequence=$(get_sequence $fs $prefix)
+	local dateformat=$(get_dateformat $fs $prefix)
 
-	[[ "$tapes" = "-" ]] || [[ "$sequence" = "-" ]] || [[ "$dateformat" = "-" ]] || [[ "$prefix" = "-" ]] && die "'$fs' is not correctly Initialized"
+	[[ "$tapes" = "-" ]] || [[ "$sequence" = "-" ]] || [[ "$dateformat" = "-" ]] && die "'$fs' is not correctly Initialized"
 
 	local current_set=$(find_tape_by_sequence $sequence)
 	local obsolete="$($ZFS_CMD list -H -o name -t snapshot | grep -e "^$fs\@$SCRIPTNAME-.*-t$current_set$")"
 
 	local date=$(date "+$dateformat")
-	local snapname="$prefix-$date-t$current_set"
+	local snapname="$SCRIPTNAME-$prefix-$date-t$current_set"
 	exec "$ZFS_CMD snapshot $fs@$snapname"
 
 	# if recursive is set, snapshot children
@@ -98,7 +102,7 @@ snapshot_fs(){
 	then
 		local children="$($ZFS_CMD list -H -o name -t filesystem | grep -e "^$fs/[^\/]\+$")"
 		for c in $children; do
-			snapshot_fs $c 1
+			snapshot_fs $c 1 $prefix
 		done
 	fi
 
@@ -111,7 +115,7 @@ snapshot_fs(){
 	# increment and store sequence
 	sequence=$((sequence + 1))
 	[[ $tapes -eq $current_set ]] && sequence=0
-	set_sequence $sequence $fs
+	set_sequence $sequence $fs $prefix
 }
 
 ########################################
@@ -121,76 +125,74 @@ set_config_value() {
 	local parameter=$1
 	local value=$2
 	local fs=$3
+	local prefix=$4
 
-	exec "$ZFS_CMD set zhanoi:$parameter=\"$value\" $fs"
+	exec "$ZFS_CMD set $SCRIPTNAME:$prefix:$parameter=\"$value\" $fs"
 }
 
 get_config_value() {
 	local parameter=$1
 	local fs=$2
-	echo $(remove_quotes $($ZFS_CMD get -H -o value zhanoi:$parameter $fs))
+	local prefix=$3
+	echo $(remove_quotes $($ZFS_CMD get -H -o value $SCRIPTNAME:$prefix:$parameter $fs))
 }
 
 set_tape_count(){
 	local value=$1
 	local fs=$2
+	local prefix=$3
 		[[ $value -lt 1 ]] || [[ $value -gt 31 ]] && die "tapes must be between 1 and 31"
-	set_config_value "tapes" $value $fs
+	set_config_value "tapes" $value $fs $prefix
 }
 
 get_tape_count(){
 	local fs=$1
-	get_config_value "tapes" $1
+	local prefix=$2
+	get_config_value "tapes" $fs $prefix
 }
 
 set_sequence(){
 	local value=$1
 	local fs=$2
-
-	set_config_value "sequence" $value $fs
+	local prefix=$3
+	set_config_value "sequence" $value $fs $prefix
 }
 
 get_sequence(){
 	local fs=$1
-	get_config_value "sequence" $1
+	local prefix=$2
+	get_config_value "sequence" $fs $prefix
 }
 
 set_dateformat(){
 	local value=$1
 	local fs=$2
-
-	set_config_value "dateformat" $value $fs
+	local prefix=$3
+	set_config_value "dateformat" $value $fs $prefix
 }
 
 get_dateformat(){
 	local fs=$1
-	get_config_value "dateformat" $1
-}
-
-set_prefix(){
-	local value=$1
-	local fs=$2
-
-	set_config_value "prefix" $value $fs
-}
-
-get_prefix(){
-	local fs=$1
-	get_config_value "prefix" $1
+	local prefix=$2
+	get_config_value "dateformat" $fs $prefix
 }
 
 set_skip(){
 	local value=$1
 	local fs=$2
+	local prefix=$3
+
 	case $value in
-		0) set_config_value "skip" "-" $fs ;;
-		1) set_config_value "skip" "On" $fs ;;
+		0) set_config_value "skip" "-" $fs $prefix;;
+		1) set_config_value "skip" "On" $fs $prefix;;
 	esac
 }
 
 get_skip(){
 	local fs=$1
-	local value=$(get_config_value "skip" $1)
+	local prefix=$2
+
+	local value=$(get_config_value "skip" $fs $prefix)
 	case $value in
 		0|Off|False|false|-) return 0 ;;
 		1|On|True|true) return 1 ;;
@@ -212,7 +214,7 @@ Usage:
     $SCRIPTNAME set [--tapes,-t NumberOfTapes] [--dateformat,-d DateFormat] [--prefix,-p Prefix] [--skip,-s] [--no-skip,-S] [-n] [--verbose, -v] zpool/filesystem
         set configuration parameter for filesystem
 
-    $SCRIPTNAME snapshot [-r] [-n] [--verbose, -v] zpool/filesystem
+    $SCRIPTNAME snapshot [--prefix,-p Prefix] [-r] [-n] [--verbose, -v] zpool/filesystem
         create a snapshot
 
 
@@ -223,9 +225,9 @@ EOF
 
 # initialize a filesystem
 cmd_init() {
-	local tapes=2 #default number of tapes
-	local dateformat="%Y-%m-%d_%H.%M" # default date format
-	local prefix="$SCRIPTNAME" #default prefix
+	local tapes=$DEFAULTTAPES #default number of tapes
+	local dateformat=$DEFAULTDATEFORMAT # default date format
+	local prefix="$DEFAULTPREFIX" #default prefix
 
 	opts="$(getopt -o t:nvd:p: -l tapes:,verbose,dateformat:,prefix: -n "$SCRIPTNAME" -- "$@")"
 	local err=$?
@@ -246,17 +248,16 @@ cmd_init() {
 	[[ $err -ne 0 ]] && cmd_help
 	filesystem_exists "$fs" || die "'$fs' does not exist!"
 
-	set_tape_count $tapes $fs
-	set_sequence 0 $fs
-	set_prefix $prefix $fs
-	set_dateformat $dateformat $fs
+	set_tape_count $tapes $fs $prefix
+	set_sequence 0 $fs $prefix
+	set_dateformat $dateformat $fs $prefix
 }
 
 # update configuration
 cmd_set(){
 	local tapes=''      #default number of tapes
 	local dateformat='' # default date format
-	local prefix=''     #default prefix
+	local prefix="$DEFAULTPREFIX"     #default prefix
 	local skip=''       #skip filesystem
 
 	opts="$(getopt -o t:nvd:p:sS -l tapes:,verbose,dateformat:,prefix:,skip,no-skip -n "$SCRIPTNAME" -- "$@")"
@@ -278,21 +279,22 @@ cmd_set(){
 	[[ $err -ne 0 ]] && cmd_help
 	filesystem_exists "$fs" || die "'$fs' does not exist!"
 
-	[[ "$tapes" != "" ]] && set_tape_count $tapes $fs
-	[[ "$prefix" != "" ]] && set_prefix $prefix $fs
-	[[ "$dateformat" != "" ]] && set_dateformat $dateformat $fs
-	[[ "$skip" != "" ]] && set_skip $skip $fs
+	[[ "$tapes" != "" ]] && set_tape_count $tapes $fs $prefix
+	[[ "$dateformat" != "" ]] && set_dateformat $dateformat $fs $prefix
+	[[ "$skip" != "" ]] && set_skip $skip $fs $prefix
 }
 
 # make a snapshot
 cmd_snapshot() {
 	local recursive=0
+	local prefix="$DEFAULTPREFIX"     #default prefix
 
-	opts="$(getopt -o rnv -l verbose -n "zhanoi" -- "$@")"
+	opts="$(getopt -o rnv -l verbose -n "$SCRIPTNAME" -- "$@")"
 	local err=$?
 	eval set -- "$opts"
 	while true; do
         case $1 in
+            -p|--prefix) prefix="$2"; shift 2 ;;
             -r) recursive=1; shift ;;
             -v|--verbose) VERBOSE=1; shift ;;
             -n) DRY=1; shift ;;
@@ -302,7 +304,7 @@ cmd_snapshot() {
 	fs=$1
 
 	[[ $err -ne 0 ]] && cmd_help
-	snapshot_fs $fs $recursive
+	snapshot_fs $fs $recursive $prefix
 }
 
 ########################################
